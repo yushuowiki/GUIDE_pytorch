@@ -7,6 +7,8 @@ import scipy.io
 from utils import load_data_motif,normalize_adj,normalize
 # from sklearn.metrics import  roc_auc_score
 from metrics import auc_roc,auc_pr,precision,recall
+from sklearn.preprocessing import MinMaxScaler
+
 from datetime import datetime
 import argparse
 import random
@@ -25,7 +27,6 @@ parser.add_argument('--beta', type=float, default=0.3, help='loss parameter')
 # parser.add_argument('--device', default='cuda', type=str, help='cuda/cpu')
 parser.add_argument('--seed', type=int, default=2021, help='Training epoch')
 
-# args = parser.parse_args([])
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -35,18 +36,19 @@ torch.manual_seed(args.seed)
 if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
-print(args.dataset)
-# device = None
-# if args.cuda:
-device = torch.device("cuda:7" if args.cuda else "cpu")
+print('dataset:', args.dataset)
+device = torch.device("cuda:6" if args.cuda else "cpu")
 print(device)
 
 dataname = args.dataset+'_both_motif'
 adj, adj_norm, X, labels, motifs, _ = load_data_motif(dataname)
 
-
-X_norm = normalize(X)
-motifs_norm = normalize(motifs)
+scaler1 = MinMaxScaler()  
+scaler2 = MinMaxScaler()  
+X_norm = scaler1.fit_transform(X)  
+motifs_norm = scaler2.fit_transform(motifs)  
+# X_norm = X
+# motifs_norm = motifs
 
 adj_norm = torch.FloatTensor(adj_norm).to(device)
 adj_label = torch.FloatTensor(adj).to(device)
@@ -61,9 +63,8 @@ hidden2=hidden1*2
 model = GUIDE(attrs.shape[1],motifs_norm.shape[1],hidden2,hidden1,emb_size,args.dropout,alpha=args.alpha).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr = args.lr,weight_decay=args.weight_decay)
 
-# guide = guide.to(device)
-# x_hat,motif_hat = guide(attrs,motifs_norm,adj_norm)
 
+results = []
 
 def loss_func_GUIDE(X, X_rec, motifs_feat, S_hat, beta):
     # Attribute reconstruction loss
@@ -87,26 +88,22 @@ for epoch in range(1,args.epoch+1):
     l = torch.mean(loss)
     l.backward()
     optimizer.step()
-    print("Epoch:", '%04d' % (epoch), 
-            "train_loss=", "{:.5f}".format(l.item()), 
-            "train/struct_loss=", "{:.5f}".format(struct_loss.item()),
-            "train/feat_loss=", "{:.5f}".format(feat_loss.item()))
-
-    if epoch%5 == 0 or epoch == args.epoch - 1:
-        with torch.no_grad():
-            model.eval()
-            X_hat, S_hat = model(attrs, motifs_norm, adj_norm) 
-            loss, struct_loss, feat_loss = loss_func_GUIDE(attrs, X_hat, motifs_norm, S_hat, args.beta)
-            score = loss.detach().cpu().numpy()
-            # auc_roc(labels, score)
-            # auc_pr(labels, score)
-            # precision(score, labels)
-            # recall(score, labels)
-            print("Epoch:", '%04d' % (epoch), 
-                    # 'roc', auc_roc(score, labels),
-                    # 'pr',auc_pr(score, labels),
-                    'precision',precision(score, labels,(50,100,150)),
-                    'recall',recall(score, labels,(50,100,150)))
+    # print("Epoch:", '%04d' % (epoch), 
+    #         "train_loss=", "{:.5f}".format(l.item()), 
+    #         "train/struct_loss=", "{:.5f}".format(struct_loss.item()),
+    #         "train/feat_loss=", "{:.5f}".format(feat_loss.item()))
+    
+    # if epoch%5 == 0 or epoch == args.epoch - 1:
+    with torch.no_grad():
+        model.eval()
+        X_hat, S_hat = model(attrs, motifs_norm, adj_norm) 
+        loss, struct_loss, feat_loss = loss_func_GUIDE(attrs, X_hat, motifs_norm, S_hat, args.beta)
+        score = loss.detach().cpu().numpy()
+        presicions = precision(score, labels,(50,100,150))
+        recalls = recall(score, labels,(50,100,150))
+        auc = auc_roc(score, labels)
+        pr = auc_pr(score, labels)
+        print("Epoch: {:4d}, roc {:.4f}, pr {:.4f}, Precision@K: [50,100,150] {:.4f}{:.4f}{:.4f}, Recall@K: [50,100,150] {:.4f}{:.4f}{:.4f}".format(epoch,auc,pr,presicions[0],presicions[1],presicions[2],recalls[0],recalls[1],recalls[2]))
 
 
 # test
@@ -117,9 +114,9 @@ with torch.no_grad():
     X_hat, S_hat = model(attrs, motifs_norm, adj_norm) 
     loss, struct_loss, feat_loss = loss_func_GUIDE(attrs, X_hat, motifs_norm, S_hat, args.beta)
     score = loss.detach().cpu().numpy()
-    # auc_roc(labels, score)
-    # auc_pr(labels, score)
-    # precision(score, labels)
-    # recall(score, labels)
+    auc = auc_roc(score,labels)
+    pr = auc_pr(score,labels)
+    print('AUC:',auc)
+    print('PR:',pr)
     print("Precision@K:", '[50,100,150]:', precision(score, labels,(50,100,150)), 
           "Recall@K:", '[50,100,150]:', recall(score, labels,(50,100,150)))
